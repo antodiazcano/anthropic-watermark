@@ -1,146 +1,135 @@
-<!--
-BADGES (ONLY FOR PUBLIC REPOS)
-<p align="center">
-<a href="https://github.com/antodiazcano/template-project/actions/workflows/ci.yml">
-  <img src="https://github.com/antodiazcano/template-project/actions/workflows/ci.yml/badge.svg" alt="CI">
-</a>
-  <img src="https://img.shields.io/badge/python-%3E%3D3.12-blue">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-</p>
--->
+# Seed and tournament text watermarks
 
-# template-project
+This repository contains two small educational watermarking methods built on a toy language model:
 
-## What to do at first
+- Deterministic sampling from a secret-derived seed.
+- Three-layer tournament sampling.
 
-Install the project and its development dependencies with:
+## Toy model and context
 
-    uv sync
+The model has 15 tokens. Token `i` receives probability
 
-This creates the `.venv` virtual environment automatically. To use a specific
-Python version, install and pin it before syncing:
+$$
+p_i = \frac{i}{\sum_{j=0}^{14}j} = \frac{i}{105}.
+$$
 
-    uv python install 3.13
-    uv python pin 3.13
-    uv sync
 
-Activating the environment is optional because commands can be run through
-`uv run`. To activate it manually:
+## Seed watermark
 
-    source .venv/bin/activate
+For every token, the seed method:
 
-In VS Code, use `Ctrl` + `Shift` + `P` and select **Python: Select
-Interpreter** to choose `.venv`.
+1. Obtains the model probabilities.
 
-Finally, change `name` and `description` in `pyproject.toml`.
+2. Encodes the current context as comma-separated token IDs.
 
-## Dealing with dependencies
+3. Calculates hash based on current `context` and `secret`.
 
-To add a package, just execute:
+4. Converts the first four bytes to a 32-bit integer seed.
 
-    uv add package
+5. Seeds NumPy and samples from the unchanged probabilities.
 
-To remove a package, just execute:
 
-    uv remove package
+The same query, secret, and settings reproduce the same sequence. Detection regenerates that sequence and returns its fraction of positional matches:
 
-Each time a package is added or removed, the change is automatically reflected
-in `pyproject.toml` and `uv.lock`.
+$$
+S_{seed} = \frac{\text{matching tokens}}{\text{tokens}}.
+$$
 
-Runtime dependencies belong in `[project].dependencies`. Since this repository
-is a template and currently has no runtime dependencies, that list is empty.
+## Tournament watermark
 
-Tools used only for development, such as formatters, linters, test runners, and
-documentation generators, belong in the `dev` dependency group. Add or remove a
-development dependency with:
+The tournament method uses three keyed bit functions. Each function assigns `0` or `1` to a candidate using the secret, current context, and candidate token.
 
-    uv add --dev package
-    uv remove --dev package
+For each generated token, it:
 
-The `dev` group is installed by `uv sync` by default. To install only runtime
-dependencies, without development tools, run:
+1. Samples $2^3 = 8$ candidates from the model probabilities.
 
-    uv sync --no-dev
+2. Calculates three signature bits for every candidate.
 
-You can also create additional named groups when useful:
+3. Pairs the candidates and lets `1` beat `0` using the first bit. If two opponents have the same bit, the winner is selected randomly.
 
-    uv add --group docs package
-    uv remove --group docs package
+4. Repeats with the second and third bits until one candidate remains.
 
-To include an additional group during synchronization, run:
+```text
+8 candidates -- bit 1 --> 4 -- bit 2 --> 2 -- bit 3 --> 1 token
+```
 
-    uv sync --group <name of the group>
+Detection does not regenerate the tournament. For every received token, it
+recreates the three bits from that token and its context, then returns their
+mean:
 
-Dependency groups are declared in the `[dependency-groups]` section of
-`pyproject.toml`.
+$$
+S_{tournament} = \frac{1}{3T}
+    \sum_{t=1}^{T}\sum_{j=1}^{3}g_j(c_t, x_t).
+$$
 
-You can configure Pylint, Mypy, or other development tools in `pyproject.toml`.
+Text sampled independently of the secret should score around `0.5` over enough
+tokens. Tournament sampling favors `1` bits, so matching watermarked text should
+usually score higher.
 
-## Saving Tokens with LLMs
+## Simple examples
 
-- Use [rtk](https://github.com/rtk-ai/rtk):
+### 1. Seed method
 
-        # 1. Install for your AI tool
-        rtk init -g                     # Claude Code / Copilot (default)
-        rtk init -g --gemini            # Gemini CLI
-        rtk init -g --codex             # Codex (OpenAI)
-        rtk init -g --agent cursor      # Cursor
-        rtk init --agent windsurf       # Windsurf
-        rtk init --agent cline          # Cline / Roo Code
-        rtk init --agent kilocode       # Kilo Code
-        rtk init --agent antigravity    # Google Antigravity
-        
-        # 2. Restart your AI tool, then test
-        git status  # Automatically rewritten to rtk git status
+Use the query `The garden hidden`, the secret `hello`, and a context length of `3`.
 
-- Use [Caveman mode](https://github.com/om-patel5/Caveman-Claude).
+1. The query becomes the context `[0, 5, 10]`.
 
-- Use lightweight models for some specific tasks like context compression. This [video](https://www.youtube.com/watch?v=NoF-YajElIM) explains it.
+2. The model produces its 15 token probabilities.
 
-## Sanity Checks
+3. HMAC hashes the secret and the context string `0,5,10`.
 
-With the ```Makefile``` you can use
+4. The first four hash bytes produce the seed `3470980064`.
 
-    make help
+5. NumPy samples token `7`, which represents the word `shapes`.
 
-to list the available targets,
+6. The new context is `[5, 10, 7]`, and the process repeats with a new hash and seed.
 
-    make install
+After three steps, the generated sequence is:
 
-to install the dependencies,
+```text
+[7, 14, 13] -> shapes . again
+```
 
-    make format
+For detection, the model regenerates `[7, 14, 13]`. If the received sequence is
+`[7, 14, 0]`, only the first two positions match, so the score is:
 
-to run isort and Black and format the code,
+$$
+S_{seed} = \frac{2}{3} = 0.67.
+$$
 
-    make lint
+### 2. Tournament method
 
-to check the source code and tests with isort, Black, Ruff, Bandit, Mypy,
-Flake8, Complexipy, and Pylint without modifying any files,
+Use the same query, secret, and context. For this reproducible example, ordinary
+NumPy sampling starts from seed `7`. This seed only fixes the example's random
+candidate draws; it is not derived from the watermark secret.
 
-    make test
+The model samples eight candidates and calculates their three signature bits:
 
-to run the tests,
+| Candidate | Token | Word | Signature |
+|---:|---:|---|---|
+| 1 | 4 | `river` | `[0, 0, 1]` |
+| 2 | 13 | `again` | `[0, 0, 0]` |
+| 3 | 10 | `hidden` | `[0, 1, 1]` |
+| 4 | 12 | `today` | `[0, 0, 0]` |
+| 5 | 14 | `.` | `[1, 0, 1]` |
+| 6 | 11 | `distant` | `[1, 1, 1]` |
+| 7 | 10 | `hidden` | `[0, 1, 1]` |
+| 8 | 4 | `river` | `[0, 0, 1]` |
 
-    make check
+The tournament then reduces the candidates:
 
-to run linting and tests,
+1. Using the first bit, the winners are `[4, 10, 11, 10]`.
 
-    make clean
+2. Using the second bit, the winners are `[10, 11]`.
 
-to delete "trash" directories like `__pycache__`. Formatting and cleanup remain
-explicit operations so that checks do not modify the working tree.
+3. Using the third bit, the final winner is token `10`, which is the word `hidden`.
 
-By default, Pylint fails under a mark of 9.5 and complete test coverage is not
-required. However, it is good practice to periodically aim for a 10/10 Pylint
-score and 100% test coverage. To see which lines are not covered, run:
+To generate another token, `10` is appended to the context, making the new three-token context `[5, 10, 10]`, and a new eight-candidate tournament begins.
 
-    uv run pytest --cov-report term-missing
+For detection, only the received token and its context are needed. The detector recreates token `10`'s signature as `[0, 1, 1]`, so this token contributes:
 
-and they will be shown.
+$$
+S_{tournament} = \frac{0 + 1 + 1}{3} = 0.67.
+$$
 
-## Others
-
-To preview the documentation, run:
-
-    uv run mkdocs serve
+For a longer text, the detector repeats this calculation for every received token and averages all the bits.

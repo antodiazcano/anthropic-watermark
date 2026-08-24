@@ -1,45 +1,42 @@
 [project]
-name = "template-project"
+name = "anthropic-watermark"
 version = "0.1.0"
-description = "Add your description here"
+description = "An educational, from-scratch reproduction of SynthID-Text-style watermarking"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
-
-[dependency-groups]
-dev = [
-    "bandit>=1.9.4",
-    "black>=26.3.1",
-    "complexipy>=5.4.1",
+dependencies = [
     "flake8>=7.3.0",
     "flake8-pyproject>=1.2.4",
     "isort>=8.0.1",
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.6",
-    "mypy>=2.1.0",
-    "pylint>=4.0.5",
+    "mypy>=2.3.1",
+    "numpy>=2.3.0",
+]
+
+[dependency-groups]
+dev = [
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.12",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "--cov src"
+
+[tool.coverage.run]
+omit = ["src/demo.py"]
+
+[tool.mypy]
+mypy_path = "src"
+explicit_package_bases = true
+
 [[tool.mypy.overrides]]
-module = ""
+module = ["numpy.*"]
 ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
 
 [tool.flake8]
 max-line-length = 88
 ignore = ["E203", "W503"]
-
-[tool.pytest.ini_options]
-pythonpath = ["."]
-addopts = "--cov src"
-
-[tool.coverage.run]
-omit = ["src/main.py"]
-
-[tool.black]
-target-version = ["py312"]
-
-[tool.isort]
-profile = "black"
