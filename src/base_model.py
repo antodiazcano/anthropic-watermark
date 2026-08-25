@@ -1,15 +1,24 @@
 """Tiny language model used for the demonstration."""
 
+import json
+import os
 from abc import ABC, abstractmethod
 
 import numpy as np
+from dotenv import load_dotenv
+from langchain_groq import ChatGroq
+from pydantic import SecretStr
 
 
 class DummyLLM(ABC):
     """Class to simulate a simple LLM."""
 
-    def __init__(self) -> None:
-        """Constructor of the class."""
+    def __init__(self, secret: str) -> None:
+        """Constructor of the class.
+
+        Args:
+            secret: Secret for the watermark.
+        """
 
         self.vocabulary = [
             "The",
@@ -29,6 +38,7 @@ class DummyLLM(ABC):
             ".",
         ]
         self.tokens = list(range(len(self.vocabulary)))
+        self.secret = secret
 
     def text_to_tokens(self, text: str) -> list[int]:
         """Transforms a text to its corresponding tokens.
@@ -53,18 +63,6 @@ class DummyLLM(ABC):
 
         return tokens
 
-    def _initial_context(self, query: str, context_length: int) -> list[int]:
-        """Create a fixed-length context from the end of the query."""
-
-        if context_length <= 0:
-            raise ValueError("context_length must be greater than zero")
-
-        query_tokens = self.text_to_tokens(query)
-        query_context = query_tokens[-context_length:]
-        padding = [0] * (context_length - len(query_context))
-
-        return padding + query_context
-
     def tokens_to_text(self, tokens: list[int]) -> str:
         """Turn the toy model's token IDs into text.
 
@@ -77,92 +75,133 @@ class DummyLLM(ABC):
 
         return " ".join(self.vocabulary[token] for token in tokens)
 
-    def _forward(self, context: list[int]) -> list[float]:
+    def _forward(self) -> list[float]:
         """Obtains a probability for each word of the vocabulary.
-
-        Args:
-            context: Previous tokens.
 
         Returns:
             One probability for each word.
         """
 
-        probs = range(len(self.vocabulary))
+        probs = range(1, len(self.vocabulary) + 1)
         normalized_probs = [p / sum(probs) for p in probs]
 
         return normalized_probs
 
-    def _sample_next_token(self, context: list[int]) -> int:
+    def _sample_next_token(self, probs: list[float]) -> int:
         """Obtains the next token.
 
         Args:
-            context: Previous tokens.
+            probs: Probabilities for each token.
 
         Returns:
             Next token.
         """
 
-        probs = self._forward(context)
         return np.random.choice(self.tokens, p=probs)
 
     @abstractmethod
-    def _sample_next_token_watermark(self, context: list[int], secret: str) -> int:
+    def _sample_next_token_watermark(self, probs: list[float]) -> int:
         """Obtains the next token.
 
         Args:
-            context: Previous tokens.
-            secret: Secret key.
+            probs: Probabilities for each token.
 
         Returns:
             Next token.
         """
 
-    def generate(
-        self, query: str, length: int, context_length: int, *, secret: str | None = None
-    ) -> list[int]:
-        """Generate plain text, or watermarked text when a secret is supplied.
+    @staticmethod
+    def _select_for_watermark(probs: list[float], threshold: float = 0.5) -> bool:
+        """Decides if a token is selected for watermarking or not. The idea is to select
+        a token with high entropy.
 
         Args:
-            query: Query of the user.
-            length: Length of the text.
-            context_length: Length of the context used to generate the deterministic
-                seed (if watermark is used).
-            secret: Secret key used to generate the deterministic seed (if watermark is
-                used).
+            probs: Probabilities for each token.
+            threshold: Threshold from which we predict high entropy.
 
         Returns:
-            Generated text.
+            `True` if the token is selected, `False` otherwise.
+        """
+
+        entropy = sum(-p * np.log2(p) if p > 0 else 0 for p in probs)
+        normalized_entropy = entropy / np.log2(len(probs))
+
+        return normalized_entropy >= threshold
+
+    def generate(self, length: int, watermark: bool = False) -> list[int]:
+        """Generates text.
+
+        Args:
+            length: Length of the text.
+            watermark: `True` to include watermark, `False` otherwise.
+
+        Returns:
+            Generated tokens.
         """
 
         output_tokens: list[int] = []
 
-        context = self._initial_context(query, context_length)
-
         while len(output_tokens) < length:
-            temp_context = context[-context_length:]
+            probs = self._forward()
 
-            if secret is not None:
-                next_token = self._sample_next_token_watermark(temp_context, secret)
+            if watermark and self._select_for_watermark(probs):
+                next_token = self._sample_next_token_watermark(probs)
             else:
-                next_token = self._sample_next_token(temp_context)
+                next_token = self._sample_next_token(probs)
 
             output_tokens.append(next_token)
-            context.append(next_token)
 
         return output_tokens
 
+    def _select_for_detection(
+        self, tokens: list[int], temperature: float = 0.5
+    ) -> list[int]:
+        """Selects the indexes of the tokens to inspect for detection.
+
+        Args:
+            tokens: Generated tokens.
+            temperature: Temperature of the LLM.
+
+        Returns:
+            Indexes of the tokens to inspect.
+
+        Raises:
+            ValueError: If the API key is not provided.
+            TypeError: If the response of the LLM is not correct.
+        """
+
+        text = self.tokens_to_text(tokens)
+        indexed_tokens = [f"{i}: {t}" for i, t in enumerate(text.split())]
+        prompt = (
+            "Identify tokens that are likely to be variable (e.g., highly "
+            "context-dependent, carrying low certainty, or open to multiple alternative"
+            f" word choices).\nTokens: {indexed_tokens}\n\nReturn ONLY a JSON array of "
+            "integers representing the selected indices, e.g. `[2, 5, 11]`."
+        )
+
+        load_dotenv()
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("You must provide an API key!")
+
+        llm = ChatGroq(
+            model="openai/gpt-oss-120b",
+            temperature=temperature,
+            api_key=SecretStr(api_key),
+        )
+        response = llm.invoke(prompt).content
+
+        if not isinstance(response, str):
+            raise TypeError("An error occurred when running the LLM!")
+
+        return json.loads(response)
+
     @abstractmethod
-    def detect(
-        self, query: str, tokens: list[int], context_length: int, secret: str
-    ) -> float:
+    def detect(self, tokens: list[int]) -> float:
         """Calculates a watermark score for a sequence of tokens.
 
         Args:
-            query: Query of the user.
             tokens: List of generated tokens.
-            context_length: Length of the context used to generate the deterministic
-                seed.
-            secret: Secret key used to generate the deterministic seed.
 
         Returns:
             Watermark score between 0 and 1.

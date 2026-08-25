@@ -12,19 +12,13 @@ def check(model: DummyLLM) -> None:
         model: Model used to implement the watermark.
     """
 
-    text_length = 50
-    secret = "hello"
-    context_length = 3
-    query = "The garden hidden"
+    text_length = 10
 
-    plain_tokens = model.generate(query, text_length, context_length)
-    watermarked_tokens = model.generate(
-        query, text_length, context_length, secret=secret
-    )
-    watermarked_tokens[-1] = 0
+    plain_tokens = model.generate(text_length, watermark=False)
+    watermarked_tokens = model.generate(text_length, watermark=True)
 
-    plain_score = model.detect(query, plain_tokens, context_length, secret)
-    watermarked_score = model.detect(query, watermarked_tokens, context_length, secret)
+    plain_score = model.detect(plain_tokens)
+    watermarked_score = model.detect(watermarked_tokens)
 
     print(f"Plain text: {model.tokens_to_text(plain_tokens)}")
     print(f"\nWatermarked text: {model.tokens_to_text(watermarked_tokens)}")
@@ -36,9 +30,11 @@ def check(model: DummyLLM) -> None:
 def main() -> None:
     """Checks the seed and tournament watermark models."""
 
-    check(SeedWatermarkModel())
+    secret = "hello"
+
+    check(SeedWatermarkModel(secret))
     print("\n" * 3)
-    check(TournamentWatermarkModel())
+    check(TournamentWatermarkModel(secret))
 
 
 if __name__ == "__main__":

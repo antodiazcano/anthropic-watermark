@@ -1,135 +1,162 @@
 # Seed and tournament text watermarks
 
-This repository contains two small educational watermarking methods built on a toy language model:
+This repository contains two educational watermarking methods built on a small
+toy language model:
 
-- Deterministic sampling from a secret-derived seed.
-- Three-layer tournament sampling.
+- sampling with a secret-derived seed;
+- three-layer tournament sampling.
 
-## Toy model and context
+## Toy model
 
-The model has 15 tokens. Token `i` receives probability
+The vocabulary contains 15 tokens. Token `i`, for `i` from `0` to `14`, has
+probability
 
 $$
-p_i = \frac{i}{\sum_{j=0}^{14}j} = \frac{i}{105}.
+p_i = \frac{i+1}{\sum_{j=1}^{15}j} = \frac{i+1}{120}.
 $$
 
+The toy model returns this same distribution at every position. A real language
+model would instead produce a new distribution from the preceding text.
+
+Before watermarking a position, the generator calculates normalized entropy:
+
+$$
+H_{normalized} =
+\frac{-\sum_{i:p_i>0}p_i\log_2(p_i)}{\log_2(V)}.
+$$
+
+The position is watermarked when this value is at least `0.5`. Otherwise, it is
+sampled normally. The toy distribution has normalized entropy `0.9395`, so all
+of its positions are watermarked when watermarking is enabled.
 
 ## Seed watermark
 
-For every token, the seed method:
+For every selected position, the seed method:
 
-1. Obtains the model probabilities.
+1. obtains the model probabilities;
+2. calculates `HMAC-SHA256` using the secret as both key and message;
+3. converts the first four digest bytes to a big-endian 32-bit seed;
+4. seeds NumPy;
+5. samples from the unchanged model probabilities.
 
-2. Encodes the current context as comma-separated token IDs.
-
-3. Calculates hash based on current `context` and `secret`.
-
-4. Converts the first four bytes to a 32-bit integer seed.
-
-5. Seeds NumPy and samples from the unchanged probabilities.
-
-
-The same query, secret, and settings reproduce the same sequence. Detection regenerates that sequence and returns its fraction of positional matches:
+Detection first asks a language model to identify variable token positions. For
+each selected position, it recreates the seeded choice and compares that choice
+with the received token. If $I$ is the set of selected indices, the score is
 
 $$
-S_{seed} = \frac{\text{matching tokens}}{\text{tokens}}.
+S_{seed} = \frac{1}{|I|}\sum_{t\in I}
+    \mathbb{1}[x_t=\hat{x}_t].
 $$
 
-## Tournament watermark
+Here, $x_t$ is the received token and $\hat{x}_t$ is the token reproduced from
+the secret and model probabilities.
 
-The tournament method uses three keyed bit functions. Each function assigns `0` or `1` to a candidate using the secret, current context, and candidate token.
+### Simple seed example
 
-For each generated token, it:
+Use the secret `hello` and the toy probabilities:
 
-1. Samples $2^3 = 8$ candidates from the model probabilities.
+1. Their normalized entropy is `0.9395`, so the position is selected.
+2. HMAC produces the seed `2993689727`.
+3. Seeded sampling selects token `11`, which represents `distant`.
+4. The toy distribution is unchanged at the next position, so the same process
+   selects token `11` again.
 
-2. Calculates three signature bits for every candidate.
-
-3. Pairs the candidates and lets `1` beat `0` using the first bit. If two opponents have the same bit, the winner is selected randomly.
-
-4. Repeats with the second and third bits until one candidate remains.
+After three positions, the watermarked tokens are
 
 ```text
-8 candidates -- bit 1 --> 4 -- bit 2 --> 2 -- bit 3 --> 1 token
+[11, 11, 11] -> distant distant distant
 ```
 
-Detection does not regenerate the tournament. For every received token, it
-recreates the three bits from that token and its context, then returns their
-mean:
-
-$$
-S_{tournament} = \frac{1}{3T}
-    \sum_{t=1}^{T}\sum_{j=1}^{3}g_j(c_t, x_t).
-$$
-
-Text sampled independently of the secret should score around `0.5` over enough
-tokens. Tournament sampling favors `1` bits, so matching watermarked text should
-usually score higher.
-
-## Simple examples
-
-### 1. Seed method
-
-Use the query `The garden hidden`, the secret `hello`, and a context length of `3`.
-
-1. The query becomes the context `[0, 5, 10]`.
-
-2. The model produces its 15 token probabilities.
-
-3. HMAC hashes the secret and the context string `0,5,10`.
-
-4. The first four hash bytes produce the seed `3470980064`.
-
-5. NumPy samples token `7`, which represents the word `shapes`.
-
-6. The new context is `[5, 10, 7]`, and the process repeats with a new hash and seed.
-
-After three steps, the generated sequence is:
-
-```text
-[7, 14, 13] -> shapes . again
-```
-
-For detection, the model regenerates `[7, 14, 13]`. If the received sequence is
-`[7, 14, 0]`, only the first two positions match, so the score is:
+Assume detection inspects all three positions but receives `[11, 11, 0]`. It
+recreates token `11` at every position and finds two matches, giving
 
 $$
 S_{seed} = \frac{2}{3} = 0.67.
 $$
 
-### 2. Tournament method
+With a real model, the probabilities can change at every position, so the same
+seed does not necessarily select the same token.
 
-Use the same query, secret, and context. For this reproducible example, ordinary
-NumPy sampling starts from seed `7`. This seed only fixes the example's random
-candidate draws; it is not derived from the watermark secret.
+## Tournament watermark
 
-The model samples eight candidates and calculates their three signature bits:
+The tournament method currently uses three deterministic bit functions. Each
+function assigns `0` or `1` from the secret and candidate token ID. The current
+functions use HMAC-SHA256, SHA3-256, and keyed BLAKE2b.
+
+For every selected position, the method:
+
+1. samples $2^3=8$ candidates from the model probabilities;
+2. calculates three signature bits for each candidate;
+3. pairs candidates and compares their first bits;
+4. lets `1` beat `0`, selecting randomly when the bits match;
+5. repeats with the second and third bits until one candidate remains.
+
+```text
+8 candidates -- bit 1 --> 4 -- bit 2 --> 2 -- bit 3 --> 1 token
+```
+
+Tournament detection does not recreate candidate draws or run the tournament.
+It calculates the three bits of each selected received token and returns their
+mean. For $m=3$ functions and selected index set $I$,
+
+$$
+S_{tournament} = \frac{1}{3|I|}
+    \sum_{t\in I}\sum_{j=1}^{3}g_j(x_t).
+$$
+
+Plain text should score around `0.5` over enough tokens. Tournament sampling
+favors `1` bits, so matching watermarked text should generally score higher.
+
+### Simple tournament example
+
+Use the secret `hello` and the toy probabilities. To make the random candidate
+draws reproducible for this example, assume ordinary NumPy sampling starts from
+seed `7`.
+
+The eight candidates and their signatures are
 
 | Candidate | Token | Word | Signature |
 |---:|---:|---|---|
-| 1 | 4 | `river` | `[0, 0, 1]` |
-| 2 | 13 | `again` | `[0, 0, 0]` |
-| 3 | 10 | `hidden` | `[0, 1, 1]` |
-| 4 | 12 | `today` | `[0, 0, 0]` |
+| 1 | 3 | `quiet` | `[0, 1, 1]` |
+| 2 | 13 | `again` | `[0, 1, 1]` |
+| 3 | 9 | `new` | `[1, 0, 0]` |
+| 4 | 12 | `today` | `[1, 0, 1]` |
 | 5 | 14 | `.` | `[1, 0, 1]` |
-| 6 | 11 | `distant` | `[1, 1, 1]` |
-| 7 | 10 | `hidden` | `[0, 1, 1]` |
-| 8 | 4 | `river` | `[0, 0, 1]` |
+| 6 | 10 | `hidden` | `[0, 1, 0]` |
+| 7 | 10 | `hidden` | `[0, 1, 0]` |
+| 8 | 3 | `quiet` | `[0, 1, 1]` |
 
-The tournament then reduces the candidates:
+The three rounds produce
 
-1. Using the first bit, the winners are `[4, 10, 11, 10]`.
+1. first-bit winners: `[3, 9, 14, 3]`;
+2. second-bit winners: `[3, 3]`;
+3. third-bit winner: token `3`, or `quiet`.
 
-2. Using the second bit, the winners are `[10, 11]`.
-
-3. Using the third bit, the final winner is token `10`, which is the word `hidden`.
-
-To generate another token, `10` is appended to the context, making the new three-token context `[5, 10, 10]`, and a new eight-candidate tournament begins.
-
-For detection, only the received token and its context are needed. The detector recreates token `10`'s signature as `[0, 1, 1]`, so this token contributes:
+The detector recreates token `3`'s signature as `[0, 1, 1]`, so this token
+contributes
 
 $$
-S_{tournament} = \frac{0 + 1 + 1}{3} = 0.67.
+\frac{0+1+1}{3} = 0.67
 $$
 
-For a longer text, the detector repeats this calculation for every received token and averages all the bits.
+to the overall tournament score. For longer text, detection repeats this for
+every selected position and averages all signature bits.
+
+## Detection model
+
+Both detectors use `openai/gpt-oss-120b` through Groq to choose token positions
+that appear variable. Detection therefore requires `GROQ_API_KEY` in a `.env`
+file. Generation itself does not call Groq.
+
+## Code
+
+```text
+src/
+  base_model.py             # toy model, entropy selection, and detection selection
+  seed_watermark.py         # seeded sampling and match score
+  tournament_watermark.py   # tournament sampling and mean-bit score
+  main.py                   # editable demonstration
+```
+
+This is a small educational model, not a detector for text produced by real
+language models.
