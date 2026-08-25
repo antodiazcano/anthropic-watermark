@@ -1,4 +1,4 @@
-"""Script to implement the tournament-based watermark."""
+"""Tournament-based watermark sampling and detection."""
 
 import hashlib
 import hmac
@@ -6,141 +6,92 @@ from collections.abc import Callable
 
 import numpy as np
 
-from src.base_model import DummyLLM
+from src.base_model import LanguageModel
 
 
-class TournamentWatermarkModel(DummyLLM):
-    """Class to simulate a simple LLM with watermark based on the tournament."""
+class TournamentWatermarkModel(LanguageModel):
+    """Language model using a three-round sampling tournament."""
 
     def _g1(self, token: int) -> int:
-        """G1 function.
-
-        Args:
-            token: Token to which the function is applied.
-
-        Returns:
-            0 or 1 signature.
-        """
+        """Return the token's secret HMAC-SHA256 bit."""
 
         return hmac.digest(self.secret.encode(), str(token).encode(), "sha256")[0] % 2
 
     def _g2(self, token: int) -> int:
-        """G2 function.
-
-        Args:
-            token: Token to which the function is applied.
-
-        Returns:
-            0 or 1 signature.
-        """
+        """Return the token's secret SHA3-256 bit."""
 
         data = f"{self.secret}:{token}".encode()
-        digest = hashlib.sha3_256(data).digest()
-        return digest[0] & 1
+        return hashlib.sha3_256(data).digest()[0] & 1
 
     def _g3(self, token: int) -> int:
-        """G3 function.
+        """Return the token's secret keyed-BLAKE2b bit."""
 
-        Args:
-            token: Token to which the function is applied.
-
-        Returns:
-            0 or 1 signature.
-        """
-
-        hasher = hashlib.blake2b(key=self.secret.encode("utf-8"), digest_size=1)
-        hasher.update(int(token).to_bytes(4, byteorder="big", signed=True))
+        hasher = hashlib.blake2b(key=self.secret.encode(), digest_size=1)
+        hasher.update(token.to_bytes(4, byteorder="big", signed=True))
         return hasher.digest()[0] % 2
 
     def _get_gs(self) -> list[Callable[[int], int]]:
-        """Obtains all the g-like functions.
-
-        Returns:
-            All g-functions.
-        """
+        """Return the three secret bit functions."""
 
         return [self._g1, self._g2, self._g3]
 
     def _tournament(
         self, candidates: list[int], signatures: list[list[int]], current_bit: int = 0
     ) -> int:
-        """Simulates a tournament to select the next token.
-
-        Args:
-            candidates: Token candidates.
-            signatures: Signature of each candidate.
-            current_bit: Current bit of the tournament.
-
-        Returns:
-            Winner token.
-        """
+        """Compare candidate pairs until one token remains."""
 
         if len(candidates) == 1:
             return candidates[0]
 
-        new_candidates = []
-        new_signatures = []
+        new_candidates: list[int] = []
+        new_signatures: list[list[int]] = []
 
-        for i in range(0, len(candidates), 2):
-            # Select two opponents
-            temp_candidates = candidates[i : i + 2]
-            # Select the corresponding bit of its signatures
-            temp_signatures = signatures[i : i + 2]
-            bit_first_candidate = temp_signatures[0][current_bit]
-            bit_second_candidate = temp_signatures[1][current_bit]
-            # Decide the winner
-            if bit_first_candidate == 1 and bit_second_candidate == 0:
-                winner = 0
-            elif bit_first_candidate == 0 and bit_second_candidate == 1:
-                winner = 1
+        for index in range(0, len(candidates), 2):
+            first_bit = signatures[index][current_bit]
+            second_bit = signatures[index + 1][current_bit]
+
+            if first_bit > second_bit:
+                winner = index
+            elif second_bit > first_bit:
+                winner = index + 1
             else:
-                winner = np.random.choice([0, 1])
-            # Pass winner and its signature to the next round
-            new_candidates.append(temp_candidates[winner])
-            new_signatures.append(temp_signatures[winner])
+                winner = index + int(np.random.choice([0, 1]))
+
+            new_candidates.append(candidates[winner])
+            new_signatures.append(signatures[winner])
 
         return self._tournament(new_candidates, new_signatures, current_bit + 1)
 
     def _sample_next_token_watermark(self, probs: list[float]) -> int:
-        """Obtains the next token. It samples candidates and their signatures and runs
-        the tournament.
-
-        Args:
-            probs: Probabilities for each token.
-
-        Returns:
-            Next token.
-        """
+        """Sample eight candidates and return the tournament winner."""
 
         g_functions = self._get_gs()
-        m = len(g_functions)
+        candidates: list[int] = []
+        signatures: list[list[int]] = []
 
-        candidates = []
-        signatures = []
-        for _ in range(2**m):
-            candidate_token = np.random.choice(self.tokens, p=probs)
-            candidates.append(candidate_token)
-            signatures.append([g(candidate_token) for g in g_functions])
+        for _ in range(2 ** len(g_functions)):
+            candidate = int(np.random.choice(self.tokens, p=probs))
+            candidates.append(candidate)
+            signatures.append([g(candidate) for g in g_functions])
 
         return self._tournament(candidates, signatures)
 
-    def detect(self, tokens: list[int]) -> float:
-        """Calculates a watermark score for a sequence of tokens.
+    def detect(self, prompt: str, tokens: list[int]) -> float:
+        """Return the mean secret bit at selected token positions."""
 
-        Args:
-            tokens: List of generated tokens.
-
-        Returns:
-            Watermark score between 0 and 1.
-        """
-
+        context = self.text_to_tokens(prompt)
         g_functions = self._get_gs()
         total_bits = 0
-        indexes_to_inspect = self._select_for_detection(tokens)
+        selected_tokens = 0
 
-        for index_to_inspect in indexes_to_inspect:
-            token_to_inspect = tokens[index_to_inspect]
-            for g in g_functions:
-                total_bits += g(token_to_inspect)
+        for token in tokens:
+            probs = self._forward(context)
 
-        return total_bits / (len(indexes_to_inspect) * len(g_functions))
+            if self._select_for_watermark(probs, self.entropy_threshold):
+                total_bits += sum(g(token) for g in g_functions)
+                selected_tokens += 1
+
+            context.append(token)
+
+        total_selected_bits = selected_tokens * len(g_functions)
+        return total_bits / total_selected_bits if total_selected_bits else 0.0

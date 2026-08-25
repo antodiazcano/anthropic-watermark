@@ -1,4 +1,4 @@
-"""Script to implement the seed-based watermark."""
+"""Seed-based watermark sampling and detection."""
 
 import hashlib
 import hmac
@@ -6,58 +6,42 @@ import struct
 
 import numpy as np
 
-from src.base_model import DummyLLM
+from src.base_model import LanguageModel
 
 
-class SeedWatermarkModel(DummyLLM):
-    """Class to simulate a simple LLM with watermark based on the seed."""
+class SeedWatermarkModel(LanguageModel):
+    """Language model using secret-seeded sampling."""
 
     def _fix_seed(self) -> None:
-        """Compute HMAC-SHA256 and convert first `n_bytes` bytes to an integer of
-        8 * `n_bytes` bits. The choice of 4 is because of the limit of numpy seed.
-        """
+        """Set NumPy's seed from the first four bytes of a secret HMAC."""
 
-        n_bytes = 4
-        hmac_digest = hmac.new(
+        digest = hmac.new(
             key=self.secret.encode("utf-8"),
             msg=self.secret.encode("utf-8"),
             digestmod=hashlib.sha256,
         ).digest()
-        seed = struct.unpack(">I", hmac_digest[:n_bytes])[0]
+        seed = struct.unpack(">I", digest[:4])[0]
         np.random.seed(seed)
 
     def _sample_next_token_watermark(self, probs: list[float]) -> int:
-        """Obtains the next token.
-
-        Args:
-            probs: Probabilities for each token.
-
-        Returns:
-            Next token.
-        """
+        """Sample after resetting NumPy to the secret-derived seed."""
 
         self._fix_seed()
-        return np.random.choice(self.tokens, p=probs)
+        return int(np.random.choice(self.tokens, p=probs))
 
-    def detect(self, tokens: list[int]) -> float:
-        """Calculates a watermark score for a sequence of tokens.
+    def detect(self, prompt: str, tokens: list[int]) -> float:
+        """Return the fraction of selected tokens reproduced by the secret."""
 
-        Args:
-            tokens: List of generated tokens.
+        context = self.text_to_tokens(prompt)
+        matches: list[int] = []
 
-        Returns:
-            Watermark score between 0 and 1.
-        """
+        for token in tokens:
+            probs = self._forward(context)
 
-        equal = []
-        indexes_to_inspect = self._select_for_detection(tokens)
+            if self._select_for_watermark(probs, self.entropy_threshold):
+                expected_token = self._sample_next_token_watermark(probs)
+                matches.append(int(token == expected_token))
 
-        for index_to_inspect in indexes_to_inspect:
-            probs = self._forward()
-            token_to_inspect = tokens[index_to_inspect]
-            if token_to_inspect == self._sample_next_token_watermark(probs):
-                equal.append(1)
-            else:
-                equal.append(0)
+            context.append(token)
 
-        return sum(equal) / len(equal) if equal else 0.0
+        return sum(matches) / len(matches) if matches else 0.0
