@@ -176,7 +176,7 @@ class LanguageModel(ABC):
         indexed_tokens = [
             f"{index}: {self.tokenizer.convert_ids_to_tokens(token)!r}"
             for index, token in enumerate(tokens)
-        ]
+        ]  # !r is for showing ok special characters
         prompt = (
             "Identify tokens that are likely to be variable (e.g., highly "
             "context-dependent, carrying low certainty, or open to multiple alternative"
@@ -200,12 +200,24 @@ class LanguageModel(ABC):
 
         return [index for index in indexes if 0 < index < len(tokens)]
 
-    @abstractmethod
     def detect(self, text: str) -> float:
         """Computes a watermark score for a text.
 
         Args:
             text: Text to score.
+
+        Returns:
+            Watermark score as a float.
+        """
+
+        return self.detect_tokens(self.text_to_tokens(text))
+
+    @abstractmethod
+    def detect_tokens(self, tokens: list[int]) -> float:
+        """Computes a watermark score from token IDs.
+
+        Args:
+            tokens: Token IDs to score.
 
         Returns:
             Watermark score as a float.

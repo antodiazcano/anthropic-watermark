@@ -35,7 +35,7 @@ It is close to `0` when one token dominates and close to `1` when many tokens ar
 
 ## Detection positions
 
-Both detectors receive one text string. In the demonstration, this is the original prompt followed by the generated continuation. They tokenize the complete text with SmolLM2 and send Groq an indexed representation of the tokenizer's raw token strings. Groq returns the indices that appear most variable.
+The detectors send Groq an indexed representation of the tokenizer's raw token strings. Groq returns the indices that appear most variable.
 
 For example, if Groq returns `[2, 5]`, the code inspects `tokens[2]` and `tokens[5]`. The indices refer to model tokens, which may be whole words, subwords, spaces, or punctuation.
 
@@ -54,7 +54,7 @@ At every selected generation position, the seed method:
 The seed is the same at every position, but the distribution changes as the
 generated context grows. The selected token can therefore change too.
 
-For detection, the detector reads the complete prompt and continuation, starting with an empty context. Before each Groq-selected token, it runs SmolLM2 on the preceding text, recreates the secret-seeded choice, and compares that choice with the observed token. By the time it reaches the continuation, its context contains the original prompt. Its score is the fraction of matches:
+For detection, the detector reads the complete prompt and continuation token IDs, starting with an empty context. Before each Groq-selected token, it runs SmolLM2 on the preceding tokens, recreates the secret-seeded choice, and compares that choice with the observed token. Its score is the fraction of matches:
 
 $$
 S_\text{seed} = \frac{\text{matching selected tokens}}{\text{selected tokens}}.

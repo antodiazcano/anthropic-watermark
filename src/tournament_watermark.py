@@ -120,17 +120,17 @@ class TournamentWatermarkModel(LanguageModel):
 
         return self._tournament(candidates, signatures)
 
-    def detect(self, text: str) -> float:
-        """Computes a watermark score for a text.
+    def detect_tokens(self, tokens: list[int]) -> float:
+        """Computes a watermark score from token IDs.
 
         Args:
-            text: Text to score.
+            tokens: Token IDs to score.
 
         Returns:
             Watermark score as a float.
         """
 
-        tokens = self.text_to_tokens(text)
+        # The set is to avoid duplicated indexes, just in case
         indexes_to_inspect = set(self._select_for_detection(tokens))
 
         g_functions = self._get_gs()

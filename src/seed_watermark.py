@@ -36,17 +36,16 @@ class SeedWatermarkModel(LanguageModel):
         self._fix_seed()
         return int(np.random.choice(self.tokens, p=probs))
 
-    def detect(self, text: str) -> float:
-        """Computes a watermark score for a text.
+    def detect_tokens(self, tokens: list[int]) -> float:
+        """Computes a watermark score from token IDs.
 
         Args:
-            text: Text to score.
+            tokens: Token IDs to score.
 
         Returns:
             Watermark score as a float.
         """
 
-        tokens = self.text_to_tokens(text)
         indexes_to_inspect = self._select_for_detection(tokens)
         matches: list[int] = []
         context: list[int] = []
