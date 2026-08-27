@@ -1331,9 +1331,9 @@
     {
       "id": "05sx9bRK7kI3FSU4QFlzs",
       "type": "text",
-      "x": 2740,
-      "y": 660,
-      "width": 164.3000030517578,
+      "x": 2700,
+      "y": 720,
+      "width": 265.9666748046875,
       "height": 40,
       "angle": 0,
       "strokeColor": "#1e1e1e",
@@ -1348,20 +1348,20 @@
       "index": "b0E",
       "roundness": null,
       "seed": 306473092,
-      "version": 210,
-      "versionNonce": 327829204,
+      "version": 221,
+      "versionNonce": 1217732716,
       "isDeleted": false,
       "boundElements": [],
-      "updated": 1787766930969,
+      "updated": 1787829962158,
       "link": null,
       "locked": false,
-      "text": "g_bits = 0",
+      "text": "total_g_bits = 0",
       "fontSize": 32,
       "fontFamily": 5,
       "textAlign": "center",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "g_bits = 0",
+      "originalText": "total_g_bits = 0",
       "autoResize": true,
       "lineHeight": 1.25
     },
@@ -1390,12 +1390,7 @@
       "version": 189,
       "versionNonce": 1975897556,
       "isDeleted": true,
-      "boundElements": [
-        {
-          "id": "jjC4b_egzpHBcOwetBW4f",
-          "type": "arrow"
-        }
-      ],
+      "boundElements": [],
       "updated": 1787766841072,
       "link": null,
       "locked": false
@@ -1577,14 +1572,6 @@
       "isDeleted": true,
       "boundElements": [
         {
-          "id": "jjC4b_egzpHBcOwetBW4f",
-          "type": "arrow"
-        },
-        {
-          "id": "vu8jQNBuDEehW5fuBh2eN",
-          "type": "arrow"
-        },
-        {
           "id": "YJ1scVvhiJhCUzJ2MqhZL",
           "type": "arrow"
         }
@@ -1738,16 +1725,7 @@
       "version": 122,
       "versionNonce": 796637652,
       "isDeleted": true,
-      "boundElements": [
-        {
-          "id": "vu8jQNBuDEehW5fuBh2eN",
-          "type": "arrow"
-        },
-        {
-          "id": "hcxnbWCt6v4vDV7pN-Gsi",
-          "type": "arrow"
-        }
-      ],
+      "boundElements": [],
       "updated": 1787766841072,
       "link": null,
       "locked": false
