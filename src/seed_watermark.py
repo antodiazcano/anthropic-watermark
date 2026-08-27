@@ -24,24 +24,42 @@ class SeedWatermarkModel(LanguageModel):
         np.random.seed(seed)
 
     def _sample_next_token_watermark(self, probs: list[float]) -> int:
-        """Sample after resetting NumPy to the secret-derived seed."""
+        """Sample a token using the watermark method.
+
+        Args:
+            probs: Probabilities for the next token.
+
+        Returns:
+            Sampled token ID.
+        """
 
         self._fix_seed()
         return int(np.random.choice(self.tokens, p=probs))
 
-    def detect(self, prompt: str, tokens: list[int]) -> float:
-        """Return the fraction of selected tokens reproduced by the secret."""
+    def detect(self, text: str) -> float:
+        """Computes a watermark score for a text.
 
-        context = self.text_to_tokens(prompt)
+        Args:
+            text: Text to score.
+
+        Returns:
+            Watermark score as a float.
+        """
+
+        tokens = self.text_to_tokens(text)
+        indexes_to_inspect = self._select_for_detection(tokens)
         matches: list[int] = []
+        context: list[int] = []
 
-        for token in tokens:
-            probs = self._forward(context)
-
-            if self._select_for_watermark(probs, self.entropy_threshold):
+        for index, token in enumerate(tokens):
+            if index in indexes_to_inspect:
+                probs = self._forward(context)
                 expected_token = self._sample_next_token_watermark(probs)
-                matches.append(int(token == expected_token))
+                if token == expected_token:
+                    matches.append(1)
+                else:
+                    matches.append(0)
 
             context.append(token)
 
-        return sum(matches) / len(matches) if matches else 0.0
+        return sum(matches) / len(matches)
